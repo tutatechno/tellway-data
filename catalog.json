@@ -19,6 +19,44 @@
    ],
    "licence": "ODbL-1.0",
    "url": "https://github.com/tutatechno/tellway-data/releases/download/hu-20260916/hu-20260916.twpack"
+  },
+  {
+   "id": "austria",
+   "name": {
+    "en": "Austria"
+   },
+   "version": "20260918",
+   "file": "austria.twpack",
+   "bytes": 87958633,
+   "sha256": "ab2fb2d74af26cef8c9bb5c3ff8cfadd6595840c73fd4cd04e96cbd7fe38e4f7",
+   "bbox": [
+    46.3717,
+    9.0053,
+    49.0444,
+    17.4256
+   ],
+   "licence": "ODbL-1.0",
+   "url": "https://github.com/tutatechno/tellway-data/releases/download/packs/austria.twpack",
+   "continent": "europe"
+  },
+  {
+   "id": "hungary",
+   "name": {
+    "en": "Hungary"
+   },
+   "version": "20260918",
+   "file": "hungary.twpack",
+   "bytes": 54141432,
+   "sha256": "1770f99af31f93a0d4873f718c2080ec9414352172f38ac577426cfae9655d76",
+   "bbox": [
+    44.9821,
+    16.1048,
+    48.8765,
+    22.9657
+   ],
+   "licence": "ODbL-1.0",
+   "url": "https://github.com/tutatechno/tellway-data/releases/download/packs/hungary.twpack",
+   "continent": "europe"
   }
  ]
 }
