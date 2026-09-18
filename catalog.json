@@ -1,25 +1,7 @@
 {
  "format": 1,
  "packs": [
-  {
-   "id": "hu",
-   "name": {
-    "hu": "Magyarország",
-    "en": "Hungary"
-   },
-   "version": "20260916",
-   "file": "hu-20260916.twpack",
-   "bytes": 54992579,
-   "sha256": "5c72e87dc763b7433aacce072cc39e7a48e75af51c938a51ede8cb0730fef822",
-   "bbox": [
-    45.7157,
-    16.1048,
-    48.8765,
-    22.9657
-   ],
-   "licence": "ODbL-1.0",
-   "url": "https://github.com/tutatechno/tellway-data/releases/download/hu-20260916/hu-20260916.twpack"
-  },
+  
   {
    "id": "austria",
    "name": {
