@@ -1,0 +1,177 @@
+name: Csomagok építése
+
+# **Nincs szerver, nincs kézi munka.** A Geofabrik kivonatait a GitHub
+# saját futtatói töltik le és dolgozzák fel, aztán feltöltik a kész
+# csomagot a `packs` release-be. Nyilvános repóban ez ingyenes.
+#
+# **Kötegben, mert 483 régió van.** A GitHub mátrixa legfeljebb 256
+# feladatot enged, ezért egy futtató több régiót visz egymás után. A
+# köteg méretét a `perJob` mező szabja meg; ha így is sok lenne a
+# feladat, a terv magától nagyobb kötegekre vált.
+#
+# Indítás: Actions → „Csomagok építése" → Run workflow. A `regions`
+# mezőt üresen hagyva minden régió elkészül; egy-két név megadásával
+# csak azok (pl. `hungary,austria`).
+
+on:
+  workflow_dispatch:
+    inputs:
+      regions:
+        description: 'Régiók vesszővel, üresen hagyva: mind'
+        required: false
+        default: ''
+      limit:
+        description: 'Hány régió készüljön el ebben a futásban (0 = mind)'
+        required: false
+        default: '0'
+      perJob:
+        description: 'Hány régió jusson egy futtatóra'
+        required: false
+        default: '4'
+  schedule:
+    # Évente egyszer újraépítjük: ami az OSM-ben gyorsan avul
+    # (nyitvatartás, üzletek), arra az app nem támaszkodik.
+    - cron: '0 3 1 2 *'
+
+permissions:
+  contents: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - id: plan
+        env:
+          WANT: ${{ github.event.inputs.regions }}
+          LIMIT: ${{ github.event.inputs.limit }}
+          PER_JOB: ${{ github.event.inputs.perJob }}
+        run: |
+          python3 tools/plan_regions.py regions.json
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          import json, math, os
+          regions = json.load(open('regions.json', encoding='utf-8'))
+          want = [x.strip() for x in os.environ.get('WANT', '').split(',') if x.strip()]
+          if want:
+              regions = [r for r in regions if r['id'] in want]
+          limit = int(os.environ.get('LIMIT') or 0)
+          if limit:
+              regions = regions[:limit]
+
+          per = max(1, int(os.environ.get('PER_JOB') or 4))
+          # A GitHub 256 feladatnál nem enged többet: ha a köteg túl kicsi
+          # lenne, magától nagyobbra vált.
+          per = max(per, math.ceil(len(regions) / 256))
+          batches = [regions[i:i + per] for i in range(0, len(regions), per)]
+          matrix = {'batch': [
+              {'name': f'{n + 1}/{len(batches)} ({b[0]["id"]}…)',
+               'regions': json.dumps(b, ensure_ascii=False)}
+              for n, b in enumerate(batches)
+          ]}
+          print(f'{len(regions)} régió, {len(batches)} köteg, {per} régió/köteg')
+          print('matrix=' + json.dumps(matrix))
+          EOF
+      - uses: actions/upload-artifact@v4
+        with:
+          name: regions-plan
+          path: regions.json
+
+  build:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      # Egyszerre húsz futtató dolgozik; ha egy köteg elhasal, a többi megy.
+      max-parallel: 20
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    name: build ${{ matrix.batch.name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install osmium
+
+      # A futtatón ~14 GB szabad hely van. Egy köteg régióit egymás után
+      # dolgozzuk fel, és minden kör után törlünk — így a legnagyobb
+      # kivonat mérete a határ, nem a kötegé.
+      - name: Hely felszabadítása
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android || true
+          df -h /
+
+      - name: Kötegek feldolgozása
+        env:
+          BATCH: ${{ matrix.batch.regions }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p out
+          echo "$BATCH" > batch.json
+
+          build_one() {
+            id="$1"; url="$2"; name="$3"
+            echo "::group::$id"
+            if ! curl -sSL --retry 3 --fail -o region.osm.pbf "$url"; then
+              echo "::warning::$id: a kivonat nem tölthető le"
+              echo "::endgroup::"
+              return 0
+            fi
+            header=$(curl -sSI "$url" | tr -d '\r' | grep -i '^last-modified:' || true)
+            date=$(python3 tools/extract_date.py "$header")
+            echo "$id — kivonat dátuma: $date"
+            if TWPACK_DB=build.sqlite python3 tools/build_region.py \
+                 region.osm.pbf out "$id" "$name" "$date"; then
+              gh release upload packs "out/$id.twpack" --clobber
+              rm -f "out/$id.twpack"
+            else
+              echo "::warning::$id: az építés elhasalt"
+            fi
+            rm -f region.osm.pbf build.sqlite
+            df -h / | tail -1
+            echo "::endgroup::"
+          }
+
+          # A release legyen meg, mielőtt az első feltöltés jönne.
+          gh release view packs >/dev/null 2>&1 || \
+            gh release create packs --title "TellWay OSM csomagok" \
+              --notes "Adatok © OpenStreetMap contributors, ODbL 1.0. Készítette: tools/build_region.py"
+
+          jq -c '.[]' batch.json | while read -r row; do
+            build_one "$(jq -r '.id' <<< "$row")" \
+                      "$(jq -r '.pbf' <<< "$row")" \
+                      "$(jq -r '.name' <<< "$row")"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: entries-${{ strategy.job-index }}
+          path: out/*.json
+          if-no-files-found: ignore
+
+  catalog:
+    needs: build
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          path: entries
+      - name: catalog.json frissítése
+        run: python3 tools/make_catalog.py entries catalog.json
+      - name: Commit
+        run: |
+          git config user.name 'tellway-bot'
+          git config user.email 'bot@users.noreply.github.com'
+          git add catalog.json regions.json || git add catalog.json
+          git commit -m 'catalog.json frissítve' || echo 'nincs változás'
+          git push || echo 'nincs mit feltölteni'
